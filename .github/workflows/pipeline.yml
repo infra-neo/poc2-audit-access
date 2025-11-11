@@ -14,6 +14,8 @@ jobs:
   setup:
     name: Setup Environment
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       timestamp: ${{ steps.timestamp.outputs.value }}
       run-id: ${{ steps.runid.outputs.value }}
@@ -58,6 +60,8 @@ jobs:
   test:
     name: Run Tests
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     needs: setup
     steps:
       - name: Checkout code
@@ -97,6 +101,8 @@ jobs:
   summarize:
     name: Summarize Results
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     needs: [setup, test]
     steps:
       - name: Checkout code
@@ -147,6 +153,8 @@ jobs:
   upload-artifacts:
     name: Upload All Artifacts
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     needs: [setup, test, summarize]
     steps:
       - name: Checkout code
