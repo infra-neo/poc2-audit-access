@@ -1,24 +1,128 @@
-name: Deploy & Test PoC
+name: Kasm Workspaces Deployment & Test
+
 on:
   push:
+    branches: [ main, 'copilot/**' ]
+  pull_request:
     branches: [ main ]
   workflow_dispatch:
 
 jobs:
-  build:
+  deploy-and-test:
+    name: Deploy Kasm Workspaces
     runs-on: ubuntu-latest
+    timeout-minutes: 60
+    
     steps:
-      - uses: actions/checkout@v4
-      - name: Init Environment
-        run: bash scripts/init_env.sh
-      - name: Setup
-        run: bash scripts/setup.sh
-      - name: Validate
-        run: bash scripts/test_env.sh | tee logs.txt
-      - name: Summarize
-        run: python3 scripts/summary.py logs.txt > report.txt
-      - name: Upload Report
+      # Checkout repository
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        
+      # Setup - Install and configure Kasm Workspaces
+      - name: Setup - Install Kasm Workspaces
+        id: setup
+        run: |
+          echo "::group::Kasm Installation"
+          bash scripts/setup_kasm.sh 2>&1 | tee setup.log
+          echo "::endgroup::"
+        continue-on-error: false
+        
+      # Test - Validate Kasm installation and API
+      - name: Test - Validate Kasm Installation
+        id: test
+        run: |
+          echo "::group::Kasm Validation Tests"
+          bash scripts/test_kasm.sh 2>&1 | tee test.log
+          echo "::endgroup::"
+        continue-on-error: true
+        
+      # Register - Connect to LXD endpoint
+      - name: Register - LXD Instance Registration
+        id: register
+        run: |
+          echo "::group::LXD Registration"
+          python3 scripts/lxd_register.py 2>&1 | tee register.log
+          echo "::endgroup::"
+        continue-on-error: true
+        
+      # Summary - Generate comprehensive report
+      - name: Summary - Generate Deployment Report
+        id: summary
+        if: always()
+        run: |
+          echo "::group::Summary Report Generation"
+          python3 scripts/summary.py test.log 2>&1 | tee summary.log
+          python3 scripts/summary.py test.log > report.txt
+          echo "::endgroup::"
+        continue-on-error: true
+        
+      # Cleanup - Stop services and cleanup temporary files
+      - name: Cleanup - Stop Services
+        if: always()
+        run: |
+          echo "::group::Cleanup"
+          bash scripts/cleanup.sh 2>&1 | tee cleanup.log
+          echo "::endgroup::"
+        continue-on-error: true
+        
+      # Artifacts - Upload all logs and reports
+      - name: Artifacts - Upload Deployment Logs
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: poc-report
+          name: kasm-deployment-logs
+          path: |
+            setup.log
+            test.log
+            register.log
+            summary.log
+            cleanup.log
+          retention-days: 30
+          
+      - name: Artifacts - Upload Summary Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kasm-deployment-report
           path: report.txt
+          retention-days: 30
+          
+      - name: Artifacts - Upload Kasm Credentials
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kasm-credentials
+          path: /tmp/kasm_credentials.txt
+          retention-days: 7
+        continue-on-error: true
+          
+      - name: Artifacts - Upload LXD Registration Data
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lxd-registration-data
+          path: /tmp/lxd_registration.json
+          retention-days: 30
+        continue-on-error: true
+        
+      # Final Status
+      - name: Deployment Status
+        if: always()
+        run: |
+          echo "=========================================="
+          echo "  DEPLOYMENT WORKFLOW COMPLETED"
+          echo "=========================================="
+          echo ""
+          echo "Repository: ${{ github.repository }}"
+          echo "Workflow Run: ${{ github.run_number }}"
+          echo "Run ID: ${{ github.run_id }}"
+          echo ""
+          echo "Artifacts generated:"
+          echo "  - kasm-deployment-logs: Complete installation and test logs"
+          echo "  - kasm-deployment-report: Summary report"
+          echo "  - kasm-credentials: Kasm access credentials"
+          echo "  - lxd-registration-data: LXD registration results"
+          echo ""
+          echo "Access artifacts at:"
+          echo "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          echo "=========================================="
