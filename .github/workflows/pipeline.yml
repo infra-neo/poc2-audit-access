@@ -1,0 +1,209 @@
+name: Audit Access Pipeline
+
+on:
+  push:
+    branches:
+      - main
+      - 'copilot/**'
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  setup:
+    name: Setup Environment
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      timestamp: ${{ steps.timestamp.outputs.value }}
+      run-id: ${{ steps.runid.outputs.value }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Generate timestamp
+        id: timestamp
+        run: |
+          echo "value=$(date +'%Y%m%d-%H%M%S')" >> $GITHUB_OUTPUT
+          echo "Generated timestamp: $(date +'%Y%m%d-%H%M%S')"
+
+      - name: Set run ID
+        id: runid
+        run: |
+          echo "value=${{ github.run_id }}" >> $GITHUB_OUTPUT
+          echo "Run ID: ${{ github.run_id }}"
+
+      - name: Display environment info
+        run: |
+          echo "Operating System: $(uname -a)"
+          echo "Runner: ${{ runner.os }}"
+          echo "Repository: ${{ github.repository }}"
+          echo "Branch: ${{ github.ref_name }}"
+          echo "Commit SHA: ${{ github.sha }}"
+
+      - name: Setup results directory
+        run: |
+          mkdir -p results
+          echo "Setup completed at $(date)" > results/setup.txt
+          echo "Repository: ${{ github.repository }}" >> results/setup.txt
+          echo "Branch: ${{ github.ref_name }}" >> results/setup.txt
+
+      - name: Upload setup artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: setup-results
+          path: results/
+          retention-days: 30
+
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    needs: setup
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download setup artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: setup-results
+          path: setup-results/
+
+      - name: Display setup info
+        run: |
+          echo "Setup information:"
+          cat setup-results/setup.txt
+
+      - name: Run validation tests
+        run: |
+          echo "Running validation tests..."
+          bash scripts/run-tests.sh
+
+      - name: Create test results
+        run: |
+          mkdir -p test-results
+          echo "Test execution completed at $(date)" > test-results/test-summary.txt
+          echo "Timestamp: ${{ needs.setup.outputs.timestamp }}" >> test-results/test-summary.txt
+          echo "Run ID: ${{ needs.setup.outputs.run-id }}" >> test-results/test-summary.txt
+          cp -r setup-results test-results/
+
+      - name: Upload test artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: test-results/
+          retention-days: 30
+
+  summarize:
+    name: Summarize Results
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    needs: [setup, test]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download test artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: test-results
+          path: test-results/
+
+      - name: Generate summary
+        run: |
+          echo "Generating pipeline summary..."
+          bash scripts/generate-summary.sh
+
+      - name: Create final report
+        run: |
+          mkdir -p final-report
+          echo "# Pipeline Summary Report" > final-report/REPORT.md
+          echo "" >> final-report/REPORT.md
+          echo "**Run ID:** ${{ needs.setup.outputs.run-id }}" >> final-report/REPORT.md
+          echo "**Timestamp:** ${{ needs.setup.outputs.timestamp }}" >> final-report/REPORT.md
+          echo "**Repository:** ${{ github.repository }}" >> final-report/REPORT.md
+          echo "**Branch:** ${{ github.ref_name }}" >> final-report/REPORT.md
+          echo "**Commit:** ${{ github.sha }}" >> final-report/REPORT.md
+          echo "" >> final-report/REPORT.md
+          echo "## Setup Phase" >> final-report/REPORT.md
+          cat test-results/setup-results/setup.txt >> final-report/REPORT.md
+          echo "" >> final-report/REPORT.md
+          echo "## Test Phase" >> final-report/REPORT.md
+          cat test-results/test-summary.txt >> final-report/REPORT.md
+          echo "" >> final-report/REPORT.md
+          echo "Pipeline completed successfully at $(date)" >> final-report/REPORT.md
+
+      - name: Display report
+        run: |
+          echo "=== Final Pipeline Report ==="
+          cat final-report/REPORT.md
+
+      - name: Upload final report
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-report-${{ needs.setup.outputs.timestamp }}
+          path: final-report/
+          retention-days: 90
+
+  upload-artifacts:
+    name: Upload All Artifacts
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    needs: [setup, test, summarize]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+
+      - name: List all artifacts
+        run: |
+          echo "Downloaded artifacts:"
+          ls -laR
+
+      - name: Create consolidated archive
+        run: |
+          mkdir -p consolidated
+          cp -r setup-results consolidated/ 2>/dev/null || true
+          cp -r test-results consolidated/ 2>/dev/null || true
+          cp -r final-report-* consolidated/ 2>/dev/null || true
+
+          echo "Creating consolidated archive..."
+          tar -czf consolidated-artifacts.tar.gz consolidated/
+
+          echo "Archive contents:"
+          tar -tzf consolidated-artifacts.tar.gz
+
+      - name: Upload consolidated artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: all-artifacts-${{ needs.setup.outputs.timestamp }}
+          path: |
+            consolidated-artifacts.tar.gz
+            consolidated/
+          retention-days: 90
+
+      - name: Pipeline completion summary
+        run: |
+          echo "=========================================="
+          echo "Pipeline Execution Complete"
+          echo "=========================================="
+          echo "Run ID: ${{ github.run_id }}"
+          echo "Timestamp: ${{ needs.setup.outputs.timestamp }}"
+          echo "Repository: ${{ github.repository }}"
+          echo "Branch: ${{ github.ref_name }}"
+          echo "Commit: ${{ github.sha }}"
+          echo "=========================================="
+          echo "Artifacts available:"
+          echo "  - setup-results"
+          echo "  - test-results"
+          echo "  - final-report-${{ needs.setup.outputs.timestamp }}"
+          echo "  - all-artifacts-${{ needs.setup.outputs.timestamp }}"
+          echo "=========================================="
