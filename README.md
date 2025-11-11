@@ -1,1 +1,1 @@
-# poc2-audit-access
+PoC2 v2 – instalación automática con .env dinámico
